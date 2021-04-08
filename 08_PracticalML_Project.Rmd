@@ -9,22 +9,147 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Introduction
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+The goal of this project is to demonstrate the ability to use R Machine Learning packages to analyze fitness data and identify in what manner participants did an exercise. Six participants lift barbells correctly and incorrectly in 5 different ways. We will determine which group is which from accelerometer data on the belt, forearm, arm, and dumbell. 
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+This data was gathered from:
+http://groupware.les.inf.puc-rio.br/har
 
-```{r cars}
-summary(cars)
+I assume the data is in your working directory, from the following two csv files:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+## Loading and Cleaning the Data
+
+First we need to load our libraries and the data sets. We will name them 'training' and 'testing'. We also set the seed so that our results are repeatable. 
+
+```{r}
+library(caret)
+
+set.seed(16903)
+training <- read.csv("pml-training.csv",na.strings = c('NA','','#DIV/0!'))
+testing <- read.csv("pml-testing.csv",na.strings = c('NA','','#DIV/0!'))
+
+dim(training)
+dim(testing)
+
+training$classe <- as.factor(training$classe)
+
+head(training)
+
 ```
 
-## Including Plots
+We see that 'training' has a lot of NA values and near zero values. Additionally, there are many values which are not useful to us in the first 7 columns (names, times, etc). We are desiring to look purely at data only, so we want to remove those from our dataset:
 
-You can also embed plots, for example:
+```{r}
+zero_val <- nearZeroVar(training)
+training <- training[, -zero_val]
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+training <- training[,colMeans(is.na(training)) < .9]
+training <- training[,-c(1:7)]
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Now, from our training data only, we we create a new training dataset and a testing dataset. The original 'testing' data is used for the quiz later. I use a 70/30 partition for the data, so 70% is used for training, and 30% is used for verification. 
+
+```{r}
+in_train <- createDataPartition(training$classe, p =0.7, list=FALSE)
+train1 <- training[in_train,]
+test1 <- training[-in_train,]
+```
+
+## Generating training models
+
+First we need to set up our control, I chose 3-fold cross validation per the lesson:
+
+```{r}
+fitControl <- trainControl(method = "cv", number = 3, verboseIter = F)
+```
+
+### Random Forests
+First, we can generate a random forest training model using the below:
+
+```{r, cache=TRUE}
+mod_RF <- train(classe~., data=train1, method="rf", trControl=fitControl, tuneLength = 5)
+
+plot(mod_RF,main = "Accuracy of Random Forest Model")
+plot(mod_RF$finalModel)
+```
+
+We see that generally, this is a very accurate model. Now we can try is on our test1 data. 
+
+```{r}
+pred_train <- predict(mod_RF,newdata=test1)
+rf_confmat <- confusionMatrix(test1$classe,pred_train)
+rf_confmat
+```
+
+We see it fits very well. 
+
+### Gradient Boosting Method
+Next, lets try gradient boosting with the same control.
+
+```{r, cache=TRUE}
+mod_GBM <- train(classe~., data=train1, method = "gbm", trControl = fitControl , verbose = FALSE)
+
+plot(mod_GBM,main = "Accuracy of GBM Model")
+```
+
+We see great accuracy, nearly as good as random forests. Nonetheless, let's try with our test1 data.
+
+```{r}
+pred_train <- predict(mod_GBM,newdata=test1)
+gbm_confmat <- confusionMatrix(test1$classe,pred_train)
+gbm_confmat
+```
+
+
+### Decision Tree
+Lastly, we'll try using decision tree per the lesson:
+
+```{r, cache=TRUE}
+mod_DT <- train(classe~., data=train1, method = "rpart", trControl = fitControl)
+
+pred_train <- predict(mod_DT,newdata=test1)
+dt_confmat <- confusionMatrix(test1$classe,pred_train)
+dt_confmat
+```
+
+From this we see that the decision tree method is the least accurate by far. It is not a good model for this particular test case. 
+
+## Conclusions
+
+In summary, our three chosen methods gave us the following accuracies:
+
+```{r}
+rf_confmat$overall[1]
+gbm_confmat$overall[1]
+dt_confmat$overall[1]
+```
+
+Surprisingly, we get nearly identical accuracies from both the random forest and boosted gradient methods. But we get terrible results from the decision trees method. Ultimately, the random forest method appears to work best for this data. 
+
+I will use the random forest method to test the accuracy on our ultimate test set of data.
+
+
+## Testing the model on our test data
+
+Now we can check the results and prediction of our model on the test data provided at the start of the project. 
+
+```{r}
+pred_data <- predict(mod_RF,newdata=testing)
+pred_data
+```
+
+These are the values used for the quiz at the end. 
+
+## Sources
+
+Thanks to the following groups for allowing their data to be used: 
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6.
+
